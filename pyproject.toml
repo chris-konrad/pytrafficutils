@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "pytrafficutils"
 description = "Useful functions for the analysis and simulation of road traffic."
 readme = "README.md"
-version = "1.0.0"
+version = "0.1.0"
 license = {file = "LICENSE"}
 authors = [
 	{name = "Christoph M. Konrad", email = "c.m.konrad@tudelft.nl"}
