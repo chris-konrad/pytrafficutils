@@ -163,7 +163,8 @@ class MovingAgent(Agent):
         traj = np.asarray(traj)
 
         if not ((traj.shape[1] == self.N_STATES) and (traj.ndim == 2)):
-            raise ValueError(f"The trajectory must be shaped (n_samples, {self.N_STATES}). Instead it was {traj.shape}.")
+            raise ValueError(f"The trajectory must be shaped (n_samples, {self.N_STATES}) with states {list(self.STATE_MAP.keys())}. "
+                             f"Instead it was {traj.shape}.")
         
         return traj
 
