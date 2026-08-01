@@ -11,8 +11,16 @@ Surrogate safety measures for traffic analysis
 
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 
 from pytrafficutils.agents import Agent
+from shapely import unary_union
+from shapely.plotting import plot_polygon
+
+from pypaperutils.design import TUDcolors
+
+from matplotlib.cm import ScalarMappable
+from matplotlib.colors import Normalize
 
 
 def pet(t1, t2, ts):   
@@ -116,7 +124,7 @@ class SurrogateSafetyMetricProcessor:
         Parameters:
         -----------
         trajs : array-like
-            Trajectory array shaped (n_trajs, n_samples, n_states)
+            Trajectory array shaped (n_trajs, n_samples, n_states) with [:,:,0] the x coordinates and [:,:,1] the y coordinates.
 
         Returns:
         --------
@@ -130,6 +138,249 @@ class SurrogateSafetyMetricProcessor:
         return dist
 
 
+    def _calc_minpathdist(trajs):
+        """ Given the trajectories (n_trajs, n_samples, 2), calculate the minimum culician distance between paths across all times.
+        
+        Parameters:
+        ----------
+        trajs: array-like
+            Trajectory array shaped (n_trajs, n_samples, n_states)
+
+        Returns:
+        --------
+        dmin: array-like
+            Minimum distances between paths with dmin shaped (n_trajs, n_samples) and dmin[i, j, k] being the minimum distance
+            of sample k in path i to path j. 
+    
+        """
+
+        diff = trajs[:, np.newaxis, :, np.newaxis, :] - trajs[np.newaxis, :, np.newaxis, :, :]
+        dist = np.linalg.norm(diff, axis=-1)
+
+        return np.nanmin(dist, axis=-1)
+
+
+    def eval_PET(self, max_pet = 5, min_tgap_between_conflicts = 0.5, conflict_thresholds=[0.5, 1.0, 1.5, 2.0], ignore_edgecases=False, plot=False):
+
+        times = self.t_begin + np.round(np.arange(self.n_steps) * self.t_s,2)
+        n_grow = int(np.ceil(min_tgap_between_conflicts / self.t_s))
+
+        # build array of all trajectories. 
+        trajs =  np.nan * np.zeros((self.n_agents, self.n_steps, 2))
+        max_extent = np.zeros(self.n_agents)
+        for i in range(self.n_agents):
+            is_active = np.logical_and(times >= self.t_ranges[i,0], times <= np.round(self.t_ranges[i,1],2))
+            trajs[i, is_active, :] = self.agents[i].get_state_trajectories(states=['p_x', 'p_y'])
+
+            max_extent[i] = self.agents[i].footprint.max_radial_extent
+
+        # calculate minimum distances.
+        min_pathdists = SurrogateSafetyMetricProcessor._calc_minpathdist(trajs)
+
+        max_extent = max_extent[np.newaxis,:] + max_extent[:, np.newaxis]   
+        max_extent = max_extent[:,:,np.newaxis]
+
+        is_close = min_pathdists < max_extent          #[i, j, k]: sample k of trajectory i is close to trajectory j
+        is_close_anysample = np.any(is_close, axis=-1) #[i,j]: Trajectoy i is close to trajectory j at any sample. 
+        is_close_anytraj = np.any(is_close, axis=-2)   #[i,k]: Sample k of trajectory i is close to any other sample
+
+        traces = []
+        footprints = []
+        for i in range(self.n_agents):
+            if np.any(is_close[i, :, :]):   #is close to another path
+
+                footprints_t = []
+                footprints_i = []
+                close_indices = np.argwhere(is_close_anytraj[i]).flatten()
+                for k in close_indices:
+                    footprints_t.append(k)
+                    footprints_i.append(self.agents[i].get_footprint_at(times[k]))
+                footprints.append([footprints_t, footprints_i])
+                traces.append(unary_union(footprints_i))
+            else:
+                footprints.append([[],[]])
+                traces.append(None)
+
+        pet_results = [] 
+        for i in range(self.n_agents):
+            for j in range(self.n_agents):
+                if j <= i:
+                    continue
+                if is_close_anysample[i,j]:
+                    trace_intersections = traces[i].intersection(traces[j])
+
+                    def _calc_conflict_indices(ii, jj):
+                        close_indices = np.argwhere(is_close[ii, jj, :]).flatten()
+                        is_in_conflict = []
+                        for l, k in enumerate(close_indices):
+                            fp_k = footprints[ii][0].index(k)
+                            if footprints[ii][1][fp_k].intersects(trace_intersections):
+                                is_in_conflict.append(k)
+
+                        mask = np.zeros((self.n_steps,), dtype=bool)
+                        mask[is_in_conflict] = True
+                        mask = np.convolve(mask, np.ones(2*n_grow+1), mode='same').astype(bool)
+                        conflict_indices = np.flatnonzero(np.diff(np.r_[0, mask, 0])).reshape(-1,2)
+                        conflict_indices[:,0] += n_grow
+                        conflict_indices[:,1] -= n_grow
+                        return conflict_indices
+
+                    conflict_indices_i = _calc_conflict_indices(i, j)
+                    conflict_indices_j = _calc_conflict_indices(j, i)
+
+                    assert conflict_indices_i.shape == conflict_indices_j.shape
+
+                    for l in range(conflict_indices_i.shape[0]):
+                        if conflict_indices_i[l,0] < conflict_indices_j[l,0]:
+                            id1 = i
+                            i_pet_a1 = conflict_indices_i[0,0] + np.argmin(min_pathdists[i, j, conflict_indices_i[0,0]:conflict_indices_i[0,1]]).flatten()
+                        
+                            id2 = j
+                            i_pet_a2 = conflict_indices_j[0,0] + np.argmin(min_pathdists[j, i, conflict_indices_j[0,0]:conflict_indices_j[0,1]]).flatten()
+                        else:
+                            id1 = j
+                            i_pet_a1 = conflict_indices_j[0,0] + np.argmin(min_pathdists[j, i, conflict_indices_j[0,0]:conflict_indices_j[0,1]]).flatten()
+
+                            id2 = i
+                            i_pet_a2 = conflict_indices_i[0,0] + np.argmin(min_pathdists[i, j, conflict_indices_i[0,0]:conflict_indices_i[0,1]]).flatten()
+
+                        a1 = self.agents[id1]
+                        a2 = self.agents[id2]
+
+                        i_entr_1st = min(conflict_indices_i[l,0], conflict_indices_j[l,0])
+                        i_entr_2nd = max(conflict_indices_i[l,0], conflict_indices_j[l,0])
+                        i_exit_1st = min(conflict_indices_i[l,1], conflict_indices_j[l,1])
+                        i_exit_2nd = max(conflict_indices_i[l,1], conflict_indices_j[l,1])
+
+                        t_entr_1st = times[i_entr_1st]
+                        t_entr_2nd = times[i_entr_2nd]
+                        t_exit_1st = times[i_exit_1st]
+                        t_exit_2nd = times[i_exit_2nd]
+
+                        pet = t_entr_2nd - t_exit_1st
+
+                        is_conflict = np.array(conflict_thresholds) > pet
+
+                        if pet > max_pet:
+                            continue
+
+                        s1_pet = a1.get_state(times[i_pet_a1][0])
+                        s2_pet = a2.get_state(times[i_pet_a2][0])        
+
+                        if pet < 0:
+                            collision_ij = footprints[i][i_exit_1st].intersects(footprints[j][i_entr_2nd])
+                            collision_ji = footprints[i][i_entr_2nd].intersects(footprints[j][i_exit_1st])
+                            if collision_ij or collision_ji:
+                                pet = 0
+                            elif ignore_edgecases:
+                                continue
+                            else:
+                                msg = (f"At {t_entr_2nd} agents {a1.name} and {a2.name} are simultaneously present"
+                                       f" on the same conflict patch without collision! Automatic interpretation of"
+                                       f" this edge case is currently not implemented. Run with 'ignore_edgecases=True'" 
+                                       f" to suppress error.")
+                                raise NotImplementedError(msg)
+
+                        row = [id1, a1.name, id2, a2.name, 
+                               t_entr_1st, t_entr_2nd, t_exit_1st, t_exit_2nd,
+                               pet, 
+                               s1_pet[0], s1_pet[1], s1_pet[2],
+                               s2_pet[0], s2_pet[1], s2_pet[2]]
+                        row += is_conflict.tolist()
+
+                        pet_results.append(row)
+
+        col_names = ["id1", "name1", "id2", "name2", 
+                     "t_enter1_s", "t_enter2_s", "t_exit1_s", "t_exit2_s",
+                     "pet_s",
+                     "x1_pet_m", "y1_pet_m", "psi1_pet_rad", "x2_pet_m", "y2_pet_m", "psi2_pet_rad"]
+        col_names += [f"{int(th*1000):04d}ms-conflict" for th in conflict_thresholds]
+
+        pet_results = pd.DataFrame(pet_results, columns=col_names)
+
+        if plot:
+            figures = []
+            cmp1 = TUDcolors().colormap('oranje')
+            cmp2 = TUDcolors().colormap('lichtgroen')
+            for i, row in pet_results.iterrows():
+
+                fig, ax = plt.subplots(1,1, layout='constrained')
+                ax.set_xlabel('x [m]')
+                ax.set_ylabel('y [m]')
+                ax.set_title(f"Post Encroachment Time (PET) - Conflict PET#{i}\n {row['name1']} vs. {row['name2']}")
+                ax.set_aspect("equal")
+
+                a1 = self.agents[row["id1"]]
+                a2 = self.agents[row["id2"]]
+
+                traj_a1 = a1.get_state_trajectories(states=['p_x', 'p_y'])
+                traj_a2 = a2.get_state_trajectories(states=['p_x', 'p_y'])
+
+                plot_polygon(traces[row["id1"]], edgecolor='none', facecolor='gray', alpha=0.4, add_points=False)
+                plot_polygon(traces[row["id2"]], edgecolor='none', facecolor='gray', alpha=0.4, add_points=False)
+
+                ax.plot(traj_a1[:,0], traj_a1[:,1], color='black', zorder=0)
+                ax.plot(traj_a2[:,0], traj_a2[:,1], color='black', zorder=0)
+
+                t_plot = times[np.argwhere(times==(row['t_exit1_s'])).flatten()[0]:np.argwhere(times==(row['t_enter2_s'])).flatten()[0]]
+                norm = Normalize(vmin=t_plot[0]*0.8, vmax=t_plot[-1]*1.2)
+                for t in t_plot:
+                    if t <= a1.t[1]:
+                        ta1 = t
+                        a1.draw_footprint_at(ta1, ax, color=cmp1(norm(ta1)), alpha=1)
+                    if t <= a2.t[1]:
+                        ta2 = t
+                        a2.draw_footprint_at(ta2, ax, color=cmp2(norm(ta2)), alpha=1)
+                a1.draw_footprint_at(ta1, ax, facecolor=cmp1(norm(ta1)), edgecolor='black', alpha=1, label=a1.name)
+                a2.draw_footprint_at(ta2, ax, facecolor=cmp2(norm(ta2)), edgecolor='black', alpha=1, label=a2.name)
+
+                s1_0 = a1.get_state(t_plot[0])
+                s1_1 = a1.get_state(ta1)
+                s2_0 = a2.get_state(t_plot[0])
+                s2_1 = a2.get_state(ta2)
+
+                xmin = min(s1_0[0], s1_1[0], s2_0[0], s2_1[0])-3
+                xmax = max(s1_0[0], s1_1[0], s2_0[0], s2_1[0])+3
+                ymin = min(s1_0[1], s1_1[1], s2_0[1], s2_1[1])-3
+                ymax = max(s1_0[1], s1_1[1], s2_0[1], s2_1[1])+3
+
+                sm1 = ScalarMappable(norm=norm, cmap=cmp1)
+                sm2 = ScalarMappable(norm=norm, cmap=cmp2)
+                cbar1 = fig.colorbar(sm1, ax=ax)
+                cbar2 = fig.colorbar(sm2, ax=ax)
+
+                cbar1.set_label('time [s]')
+                cbar2.set_ticks([])
+                cbar1.ax.set_ylim([t_plot[0], t_plot[-1]])
+                cbar2.ax.set_ylim([t_plot[0], t_plot[-1]])
+
+                ax.set_xlim(xmin, xmax)
+                ax.set_ylim(ymin, ymax)
+                ax.legend(loc='lower left')
+
+                ax.annotate(f"PET = {row['pet_s']:.2f} s", (0.05, 0.95), xycoords='axes fraction', va='top', ha='left', fontsize=20)
+
+                figures.append(fig)
+
+            return pet_results, figures
+        else:
+            return pet_results
+
+
+    def plot_pet_results(self, pet_results):
+
+        for i, row in pet_results.iterrows():
+            fig, ax = plt.subplots(1,1, layout='constrained')
+            ax.set_xlabel('x [m]')
+            ax.set_ylabel('y [m]')
+            ax.set_title(f"Conflict PET#{i} - Post Encroachment Time (PET) \n {row['name1']} vs. {row['name2']}")
+            ax.set_aspect("equal")
+
+            traj_a1 = self.agents[row["id1"]].get_state_trajectories(states=['p_x', 'p_y'])
+            traj_a2 = self.agents[row["id1"]].get_state_trajectories(states=['p_x', 'p_y'])
+        
+            
+
     def eval_TTC(self, T_extrapolation, t_s_extrapolation=0.01, dt_min_interaction = 1, conflict_thresholds=[0.5, 1.0, 1.5, 2.0]):
 
         times = self.t_begin + np.arange(self.n_steps) * self.t_s
@@ -141,7 +392,7 @@ class SurrogateSafetyMetricProcessor:
             #find active agents at time t
             is_active = np.logical_and(t >= self.t_ranges[:,0], t < self.t_ranges[:,1])
             active_agents = self.agents[is_active]
-            active_agent_indices = np.argwhere(is_active).flatten()
+            active_agent_indices = np.argwhere(is_active).flatten() 
 
             #prepare ttc_i array
             ttc_i = np.nan * np.zeros((active_agents.size, active_agents.size, 1))
@@ -293,8 +544,8 @@ class SurrogateSafetyMetricProcessor:
                             ttc_min.append(np.nanmin(ttc_m))
                             ttc_max.append(np.nanmax(ttc_m))
                             ttc_mean.append(np.nanmean(ttc_m))
-                            t_ttc_min.append(np.argwhere(ttc_min[-1]==ttc_m).flatten()[0]*self.t_s)
-                            t_ttc_max.append(np.argwhere(ttc_max[-1]==ttc_m).flatten()[0]*self.t_s)
+                            t_ttc_min.append(np.argwhere(ttc_min[-1]==ttc_m).flatten()[0]*self.t_s + interaction_begin[m]*self.t_s)
+                            t_ttc_max.append(np.argwhere(ttc_max[-1]==ttc_m).flatten()[0]*self.t_s + interaction_begin[m]*self.t_s)
 
                             s1 = self.agents[a_i].get_state(t_ttc_min[-1])
                             x1_ttc_min.append(s1[0])
