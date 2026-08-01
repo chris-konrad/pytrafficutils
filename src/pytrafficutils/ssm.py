@@ -365,20 +365,6 @@ class SurrogateSafetyMetricProcessor:
             return pet_results, figures
         else:
             return pet_results
-
-
-    def plot_pet_results(self, pet_results):
-
-        for i, row in pet_results.iterrows():
-            fig, ax = plt.subplots(1,1, layout='constrained')
-            ax.set_xlabel('x [m]')
-            ax.set_ylabel('y [m]')
-            ax.set_title(f"Conflict PET#{i} - Post Encroachment Time (PET) \n {row['name1']} vs. {row['name2']}")
-            ax.set_aspect("equal")
-
-            traj_a1 = self.agents[row["id1"]].get_state_trajectories(states=['p_x', 'p_y'])
-            traj_a2 = self.agents[row["id1"]].get_state_trajectories(states=['p_x', 'p_y'])
-        
             
 
     def eval_TTC(self, T_extrapolation, t_s_extrapolation=0.01, dt_min_interaction = 1, conflict_thresholds=[0.5, 1.0, 1.5, 2.0]):
