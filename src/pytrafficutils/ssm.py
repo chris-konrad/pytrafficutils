@@ -339,10 +339,27 @@ class SurrogateSafetyMetricProcessor:
                 s2_0 = a2.get_state(t_plot[0])
                 s2_1 = a2.get_state(ta2)
 
-                xmin = min(s1_0[0], s1_1[0], s2_0[0], s2_1[0])-3
-                xmax = max(s1_0[0], s1_1[0], s2_0[0], s2_1[0])+3
-                ymin = min(s1_0[1], s1_1[1], s2_0[1], s2_1[1])-3
-                ymax = max(s1_0[1], s1_1[1], s2_0[1], s2_1[1])+3
+                xmin = min(s1_0[0], s1_1[0], s2_0[0], s2_1[0])-4
+                xmax = max(s1_0[0], s1_1[0], s2_0[0], s2_1[0])+4
+                ymin = min(s1_0[1], s1_1[1], s2_0[1], s2_1[1])-4
+                ymax = max(s1_0[1], s1_1[1], s2_0[1], s2_1[1])+4
+
+                # adjust frame ratio
+                dx = (xmax - xmin)
+                dy = (ymax - ymin) 
+                ratio = dx / dy
+                if ratio > 4/3:
+                    r0 = 4/3
+                    a = r0 * dy / dx
+                    dy_add = (dy / a - dy) /2
+                    ymin -= dy_add
+                    ymax += dy_add
+                elif ratio < 3/4:
+                    r0 = 3/4
+                    a = r0 * dy / dx
+                    dx_add = (dx*a - dx) /2
+                    xmin -= dx_add
+                    xmax += dx_add
 
                 sm1 = ScalarMappable(norm=norm, cmap=cmp1)
                 sm2 = ScalarMappable(norm=norm, cmap=cmp2)
@@ -367,8 +384,75 @@ class SurrogateSafetyMetricProcessor:
             return pet_results
             
 
-    def eval_TTC(self, T_extrapolation, t_s_extrapolation=0.01, dt_min_interaction = 1, conflict_thresholds=[0.5, 1.0, 1.5, 2.0]):
+    def eval_TTC(self, T_extrapolation, t_s_extrapolation=0.01, min_tgap_between_conflicts = 1, conflict_thresholds=[0.5, 1.0, 1.5, 2.0], plot=False):
+        """Evaluate the scenario for Time to Collision (TTC)
 
+        Uses linear extrapolation of the current state assuming constant speed and constant yaw angle:
+            dx = v * cos(psi)
+            dy = v * sin(psi)
+
+        Evaluates extrapolations for collisions based on footprint overlap.
+
+        Parameters
+        ----------
+        T_extrapolation : float
+            The maximum time [s] to extrapolate. This equals the maximum TTC that will be detected. 
+        t_s_extrapolation : float, optional
+            The step width (=sample time) [s] for extrapolation. By default 0.01 s
+        min_tgap_between_conflicts : int, optional
+            Minimum time gap [s] between separate conflicts. If the time between two conflicts is smaller 
+            than this time, they will be treated as one conflict, by default 1 s
+        conflict_thresholds : list, optional
+            List of TTC thresholds [s] to classify an interaction as a conflict. An interaction is classified as a
+            t-conflict if TTC < t. By default [0.5, 1.0, 1.5, 2.0]
+        plot : bool, optional
+            Visualize each conflict in a plot. By default False
+
+        Returns
+        -------
+        ttc_results : pd.DataFrame
+            The TTC results. Each row in the table corresponds to a conflict. All The columns are:
+                id1 : int
+                    Index of the first agent involved in a conflict.
+                name1: str
+                    Name of the first agent
+                id2 : int
+                    Index of the second agent involved in a conflict
+                name2 : str
+                    Name of the second agent
+                t_begin : float
+                    Time [s] of the beginning of the conflict
+                t_end : float
+                    Time [s] of the end of the conflict
+                ttc_min : float
+                    Minimum TTC [s] reached during the conflict
+                ttc_max, float
+                    Maximum TTC [s] reached during the conflict
+                ttc_mean: float
+                    Mean TTC [s] of the conflict
+                t_ttc_min : float
+                    Time of the minimum TTC.
+                t_ttc_max : float
+                    Time of the maximum TTC.
+                x1_ttc_min : float
+                    x-position [m] of the first agent at the minimum TTC 
+                y1_ttc_min : float
+                    y-position [m] of the first agent at the minimum TTC 
+                psi1_ttc_min : psi1_ttc_min, 
+                    yaw angle [rad] of the first agent at the minimum TTC
+                x2_ttc_min : float
+                    x-position [m] of the second agent at the minimum TTC 
+                y2_ttc_min : float
+                    y-position [m] of the second agent at the minimum TTC 
+                psi2_ttc_min : psi2_ttc_min,
+                    yaw angle [rad] of the second agent at the minimum TTC 
+        ttc_trajectories : np.ndarray
+            The trajectories of TTC values [s] between pairs of agents shaped
+            (n_agents, n_agents, n_steps). Thus, [i, j, k] returns the TTC value 
+            between agent i and agent j at time step k. NaN marks samples for which
+            the TTC value does not exits. 
+
+        """
         times = self.t_begin + np.arange(self.n_steps) * self.t_s
 
         ttc = np.nan * np.zeros((self.n_agents, self.n_agents, self.n_steps))
@@ -506,7 +590,7 @@ class SurrogateSafetyMetricProcessor:
                             t0 = t_interaction_end[m]
                             t1 = t_interaction_begin[m+1]
 
-                            gap_has_min_length = t1 - t0 >= dt_min_interaction
+                            gap_has_min_length = t1 - t0 >= min_tgap_between_conflicts
                             if not gap_has_min_length:
                                 interaction_mask_begin[m+1] = gap_has_min_length
                                 interaction_mask_end[m] = gap_has_min_length
@@ -573,5 +657,117 @@ class SurrogateSafetyMetricProcessor:
 
         if self.verbose:
             print(ttc_results)
+
+        if plot:
+
+            col1 = TUDcolors().get("oranje")
+            col2 = TUDcolors().get("lichtgroen")
+
+            cmp1 = TUDcolors().colormap("oranje")
+            cmp2 = TUDcolors().colormap("lichtgroen")
+
+            red = TUDcolors().get("rood")
+
+            figs = []
+
+            for i, row in ttc_results.iterrows():
+                fig, axes = plt.subplots(1,2, layout='constrained')
+                fig.suptitle(f"Time to Collision (TTC) - Conflict TTC#{i}\n {row['name1']} vs. {row['name2']}")
+                fig.set_size_inches(15,6.2)
+
+                # xy-plot
+                ax = axes[0]
+                ax.set_xlabel('x [m]')
+                ax.set_ylabel('y [m]')
+                ax.set_title("conflict trajectories (XY)")
+                ax.set_aspect("equal")
+
+                a1 = self.agents[row["id1"]]
+                a2 = self.agents[row["id2"]]
+
+                traj_a1 = a1.get_state_trajectories(states=['p_x', 'p_y'])
+                traj_a2 = a2.get_state_trajectories(states=['p_x', 'p_y'])
+
+                i1_begin = a1._find_state_index_at_time(row['t_begin'])
+                i1_end = a1._find_state_index_at_time(row['t_end'])
+                i2_begin = a2._find_state_index_at_time(row['t_begin'])
+                i2_end = a2._find_state_index_at_time(row['t_end'])
+
+                extrpol1 = a1.extrapolate_from_t(row['t_ttc_min'], row['ttc_min'], t_s_extrapolation)
+                extrpol2 = a2.extrapolate_from_t(row['t_ttc_min'], row['ttc_min'], t_s_extrapolation)
+                ax.plot(extrpol1[:,0], extrpol1[:,1], color=col1, linestyle='dashed')
+                ax.plot(extrpol2[:,0], extrpol2[:,1], color=col2, linestyle='dashed')
+
+                ax.plot(traj_a1[i1_begin:i1_end,0], traj_a1[i1_begin:i1_end,1], color=col1, linewidth=5)
+                ax.plot(traj_a2[i2_begin:i2_end,0], traj_a2[i2_begin:i2_end,1], color=col2, linewidth=5)
+                ax.plot(traj_a1[:,0], traj_a1[:,1], color='black', linewidth=1)
+                ax.plot(traj_a2[:,0], traj_a2[:,1], color='black', linewidth=1)
+
+                a1.draw_footprint_at(row['t_ttc_min'], ax, facecolor=col1, edgecolor='black', alpha=1, label=a1.name)
+                a2.draw_footprint_at(row['t_ttc_min'], ax, facecolor=col2, edgecolor='black', alpha=1, label=a2.name)
+                a1.footprint.plot_at(extrpol1[-1,:], ax, edgecolor='none', facecolor=cmp1(0.3))
+                a2.footprint.plot_at(extrpol2[-1,:], ax, edgecolor='none', facecolor=cmp2(0.3))
+
+                s1_0 = a1.get_state(row['t_begin'])
+                s1_1 = a1.get_state(row['t_end'])
+                s2_0 = a2.get_state(row['t_begin'])
+                s2_1 = a2.get_state(row['t_end'])
+
+                ax.scatter([s1_0[0], s2_0[0]], [s1_0[1], s2_0[1]], marker='o', facecolors='none', edgecolors='black', label=f"t_begin: {row['t_begin']:.2f} s", zorder=100)
+                ax.scatter([s1_1[0], s2_1[0]], [s1_1[1], s2_1[1]], marker='o', facecolors='black', edgecolors='black', label=f"t_end: {row['t_end']:.2f} s", zorder=100)
+                ax.plot([row['x1_ttc_min'], row['x2_ttc_min']], [row['y1_ttc_min'], row['y2_ttc_min']], marker='o', linestyle='none', markerfacecolor='black', markerfacecoloralt='none', fillstyle='left', markeredgecolor='black', label=f't_ttcmin: {row['t_ttc_min']:.2f} s', zorder=100)
+                ax.plot([extrpol1[-1,0], extrpol2[-1,0]], [extrpol1[-1,1], extrpol2[-1,1]], marker='o', linestyle='none', markerfacecolor='black', markerfacecoloralt='none', fillstyle='right', markeredgecolor='black', label=f'extrapolated collision: {row['t_ttc_min']+row['ttc_min']:.2f} s', zorder=100)
+
+                xmin = min(s1_0[0], s1_1[0], s2_0[0], s2_1[0], np.min(extrpol1[:,0]), np.min(extrpol2[:,0]))-3
+                xmax = max(s1_0[0], s1_1[0], s2_0[0], s2_1[0], np.max(extrpol1[:,0]), np.max(extrpol2[:,0]))+3
+                ymin = min(s1_0[1], s1_1[1], s2_0[1], s2_1[1], np.min(extrpol1[:,1]), np.min(extrpol2[:,1]))-3
+                ymax = max(s1_0[1], s1_1[1], s2_0[1], s2_1[1], np.max(extrpol1[:,1]), np.max(extrpol2[:,1]))+3
+
+                # adjust frame ratio
+                dx = (xmax - xmin)
+                dy = (ymax - ymin) 
+                ratio = dx / dy
+                if ratio > 4/3:
+                    r0 = 4/3
+                    a = r0 * dy / dx
+                    dy_add = (dy / a - dy) /2
+                    ymin -= dy_add
+                    ymax += dy_add
+                elif ratio < 3/4:
+                    r0 = 3/4
+                    a = r0 * dy / dx
+                    dx_add = (dx*a - dx) /2
+                    xmin -= dx_add
+                    xmax += dx_add
+    
+                ax.set_xlim(xmin, xmax)
+                ax.set_ylim(ymin, ymax)
+                ax.legend(loc='lower left')
+                ax.grid()
+
+                ax.annotate(f"TTC = {row['ttc_min']:.2f} s", (0.05, 0.95), xycoords='axes fraction', va='top', ha='left', fontsize=20)
+
+                #t plot
+                ax = axes[1]
+
+                ax.set_title("TTC trajectory (t)")
+                ax.set_xlabel("time [s]")
+                ax.set_ylabel("TTC [s]")
+
+                i_begin = np.argmin(np.abs(times-row['t_begin'])).flatten()[0]
+                i_end = np.argmin(np.abs(times-row['t_end'])).flatten()[0]
+                i_ttcmin = np.argmin(np.abs(times-row['t_ttc_min'])).flatten()[0]
+                i_ttcmax = np.argmin(np.abs(times-row['t_ttc_max'])).flatten()[0]
+
+                ax.plot(times[i_begin:i_end+1], ttc[row["id1"], row["id2"], i_begin:i_end+1], color='black', label='TTC(t)')
+                ax.plot([times[i_ttcmin]], [row["ttc_min"]], color=red, linestyle='none', marker='^', label=f"min. TTC: {row["ttc_min"]:.2f} s")
+                ax.plot([times[i_ttcmax]], [row["ttc_max"]], color=red, linestyle='none', marker='v', label=f"max. TTC: {row["ttc_max"]:.2f} s")
+                ax.axhline(y=row["ttc_mean"], color=red, label=f"mean TTC: {row["ttc_mean"]:.2f} s")
+                ax.grid()
+                ax.legend()
+
+                figs.append(fig)
+
+            return ttc_results, ttc, figs
 
         return ttc_results, ttc
