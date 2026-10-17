@@ -62,6 +62,37 @@ class Agent:
         raise NotImplementedError(f'extrapolate_from_t() not implemented for class {type(self).__name__()}')
 
 
+    def get_footprint_at(self, t):
+        """ Return the footprint polygon at time t.
+
+        Parameters
+        ----------
+        t : float
+            Time of the requested footprint
+        
+        Returns
+        -------
+        footprint : shapely.geometry.Polygon 
+            The polygon at the requested time.
+        """
+        return self.footprint.get_polygons_at(self.get_state(t)[:3])
+
+
+    def draw_footprint_at(self, t, ax, **kwargs_polygon):
+        """Draw the footprint of this agent at time t into the supplied axes.
+
+        Parameters
+        ----------
+        t : float
+            Time of the requested footprint
+        ax : Axes
+            Axes to draw into.
+        kwargs_polygon : dict
+            Any keyword arguments accepted by shapely.plotting.plot_polygon
+        """
+        s = self.get_state(t)
+        self.footprint.plot_at(s[:3], ax, **kwargs_polygon)
+
 
 class StationaryAgent(Agent):
     """ An agent fixed in space
@@ -92,7 +123,7 @@ class StationaryAgent(Agent):
         return traj
 
 
-    def get_state(self,t):
+    def get_state(self, t):
         """ Return the state of the agent at time t.
 
         Returns the fixed state of the stationary agent
@@ -172,7 +203,7 @@ class MovingAgent(Agent):
     def _find_state_index_at_time(self, t):
         """ Return the state index closest to time t"""
 
-        if t >= self.t[0] and t < self.t[1]:
+        if t >= self.t[0] and t <= self.t[1]:
             idx = int(round((t-self.t[0])/self.t[2]))
         else:
             idx = None
@@ -205,6 +236,24 @@ class MovingAgent(Agent):
         s = self._traj[idx, :].copy()
 
         return s
+
+
+    def get_state_trajectories(self, states=['p_x', 'p_y', 'psi', 'v']):
+        """ Return the trajectories of selected states.
+        
+        Parameters
+        ----------
+        states : list
+            List of state names to return. Default is ['p_x', 'p_y', 'psi', 'v'], returning all states.
+
+        Returns
+        -------
+        traj : np.ndarray
+            Trajectory array shaped [n_samples, n_states].
+        """
+        state_indices = [self.STATE_MAP[k] for k in states]
+
+        return self._traj[:, state_indices]
 
 
     def extrapolate_from_t(self, t, T, t_s = 0.01):
@@ -330,7 +379,7 @@ class Bicycle(MovingAgent):
             The trajectory array of the bicycle shaped (n_samples, n_states) where each state is [x, y, psi, v].
         length : float, optional
             The length of the bike in m.. The default is 1.8.
-        widht : float
+        width : float
             The width of the bike in m. The default is 0.8.
         wheeldiameter : float
             The diameter of the wheel of the bike in m. The default is 0.72

@@ -96,7 +96,7 @@ class Footprint():
         states : array-like
             Array of states shaped (n_samples, 3) or (3,), where each state states[i,:] = [x_i, y_i, psi_i]
         """
-
+        kwargs_polygon = dict(add_points=False) | kwargs_polygon
         kwargs_polygon['ax'] = ax
 
         footprints = self.get_polygons_at(states)
