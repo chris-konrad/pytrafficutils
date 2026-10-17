@@ -379,7 +379,7 @@ class Bicycle(MovingAgent):
             The trajectory array of the bicycle shaped (n_samples, n_states) where each state is [x, y, psi, v].
         length : float, optional
             The length of the bike in m.. The default is 1.8.
-        widht : float
+        width : float
             The width of the bike in m. The default is 0.8.
         wheeldiameter : float
             The diameter of the wheel of the bike in m. The default is 0.72
