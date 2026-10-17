@@ -6,8 +6,8 @@ A personal collection of tools frequently used for traffic analysis and simulati
 - Provide 2D polygons representing the **footprints** of different kinds of traffic agents (rectangls, diamonds).
 - Calculate the Surrogate Safety Metrics (SSMs) Time-To-Collsision (TTC) and Post-Encroachment Time (PET).
 
-<img width="480" height="300" alt="pytrafficutils_ttc_example" src="https://github.com/user-attachments/assets/c140c634-f8b1-4e45-9699-979a94755042" />
-<img width="429" height="300" alt="pytrafficutils_pet_example" src="https://github.com/user-attachments/assets/5310fdb6-6736-494c-97d6-4c445ee73fd9" />
+<img width="320" height="200" alt="pytrafficutils_ttc_example" src="https://github.com/user-attachments/assets/c140c634-f8b1-4e45-9699-979a94755042" />
+<img width="290" height="200" alt="pytrafficutils_pet_example" src="https://github.com/user-attachments/assets/5310fdb6-6736-494c-97d6-4c445ee73fd9" />
 
 ## Disclaimer
 
