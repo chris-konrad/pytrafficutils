@@ -111,7 +111,7 @@ class SurrogateSafetyMetricProcessor:
             t_ranges[i,:] = a.t[:2]
 
         t_begin = t_ranges.min()
-        t_end = t_ranges.max()+self.t_s
+        t_end = t_ranges.max()
 
         steps = int(round((t_end - t_begin)/self.t_s))
 
@@ -158,15 +158,15 @@ class SurrogateSafetyMetricProcessor:
         dist = np.linalg.norm(diff, axis=-1)
 
         return np.nanmin(dist, axis=-1)
-
+    
 
     def eval_PET(self, max_pet = 5, min_tgap_between_conflicts = 0.5, conflict_thresholds=[0.5, 1.0, 1.5, 2.0], ignore_edgecases=False, plot=False):
 
-        times = self.t_begin + np.round(np.arange(self.n_steps) * self.t_s,2)
+        times = self.t_begin + np.round(np.arange(self.n_steps+1) * self.t_s,2)
         n_grow = int(np.ceil(min_tgap_between_conflicts / self.t_s))
 
         # build array of all trajectories. 
-        trajs =  np.nan * np.zeros((self.n_agents, self.n_steps, 2))
+        trajs =  np.nan * np.zeros((self.n_agents, self.n_steps+1, 2))
         max_extent = np.zeros(self.n_agents)
         for i in range(self.n_agents):
             is_active = np.logical_and(times >= self.t_ranges[i,0], times <= np.round(self.t_ranges[i,1],2))
@@ -174,7 +174,12 @@ class SurrogateSafetyMetricProcessor:
 
             max_extent[i] = self.agents[i].footprint.max_radial_extent
 
-        # calculate minimum distances.
+        # calcualte minimum spatiotemporal distances
+        dists = SurrogateSafetyMetricProcessor._calc_distances(trajs) #[i,j, k]: distance between agent i and j at sample k
+        idx_min_dists = np.argmin(dists, axis=2)    
+        min_dists = np.min(dists, axis=2)        #[i,j] minimum distance between agent i and j
+
+        # calculate minimum path distances.
         min_pathdists = SurrogateSafetyMetricProcessor._calc_minpathdist(trajs)
 
         max_extent = max_extent[np.newaxis,:] + max_extent[:, np.newaxis]   
@@ -202,6 +207,7 @@ class SurrogateSafetyMetricProcessor:
                 traces.append(None)
 
         pet_results = [] 
+        conflict_areas = []
         for i in range(self.n_agents):
             for j in range(self.n_agents):
                 if j <= i:
@@ -268,32 +274,39 @@ class SurrogateSafetyMetricProcessor:
                         s2_pet = a2.get_state(times[i_pet_a2][0])        
 
                         if pet < 0:
-                            collision_ij = footprints[i][i_exit_1st].intersects(footprints[j][i_entr_2nd])
-                            collision_ji = footprints[i][i_entr_2nd].intersects(footprints[j][i_exit_1st])
+                            collision_ij = footprints[i][1][i_exit_1st].intersects(footprints[j][1][i_entr_2nd])
+                            collision_ji = footprints[i][1][i_entr_2nd].intersects(footprints[j][1][i_exit_1st])
                             if collision_ij or collision_ji:
                                 pet = 0
                             elif ignore_edgecases:
-                                continue
+                                pet= 0
                             else:
-                                msg = (f"At {t_entr_2nd} agents {a1.name} and {a2.name} are simultaneously present"
+                                msg = (f"At t={t_entr_2nd}, agents {a1.name} and {a2.name} are simultaneously present"
                                        f" on the same conflict patch without collision! Automatic interpretation of"
                                        f" this edge case is currently not implemented. Run with 'ignore_edgecases=True'" 
                                        f" to suppress error.")
                                 raise NotImplementedError(msg)
 
+                        #minimum distance
+                        dmin = min_dists[i,j]
+                        t_dmin = times[idx_min_dists[i,j]]
+
                         row = [id1, a1.name, id2, a2.name, 
                                t_entr_1st, t_entr_2nd, t_exit_1st, t_exit_2nd,
                                pet, 
                                s1_pet[0], s1_pet[1], s1_pet[2],
-                               s2_pet[0], s2_pet[1], s2_pet[2]]
+                               s2_pet[0], s2_pet[1], s2_pet[2],
+                               t_dmin, dmin]
                         row += is_conflict.tolist()
 
                         pet_results.append(row)
+                        conflict_areas.append(trace_intersections)
 
         col_names = ["id1", "name1", "id2", "name2", 
                      "t_enter1_s", "t_enter2_s", "t_exit1_s", "t_exit2_s",
                      "pet_s",
-                     "x1_pet_m", "y1_pet_m", "psi1_pet_rad", "x2_pet_m", "y2_pet_m", "psi2_pet_rad"]
+                     "x1_pet_m", "y1_pet_m", "psi1_pet_rad", "x2_pet_m", "y2_pet_m", "psi2_pet_rad",
+                     "t_dmin_s", "dmin_m"]
         col_names += [f"{int(th*1000):04d}ms-conflict" for th in conflict_thresholds]
 
         pet_results = pd.DataFrame(pet_results, columns=col_names)
@@ -379,9 +392,9 @@ class SurrogateSafetyMetricProcessor:
 
                 figures.append(fig)
 
-            return pet_results, figures
+            return pet_results, conflict_areas, figures
         else:
-            return pet_results
+            return pet_results, conflict_areas
             
 
     def eval_TTC(self, T_extrapolation, t_s_extrapolation=0.01, min_tgap_between_conflicts = 1, conflict_thresholds=[0.5, 1.0, 1.5, 2.0], plot=False):
