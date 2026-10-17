@@ -70,9 +70,6 @@ A module defining the footprints of traffic agents as 2D shapes. Footprints are 
 A module to evaluate surrogate safety metrics (SSMs) using the `pytrafficutils.ssm.SurrogateSafetyProcessor()` class. This class takes a list of traffic agents `pytrafficutils.agents.Agent()` and evaluates SSMs on the trajectories of their kinematic states. Respects footprints where appropriate. Uses matrix operations where possible for computational efficiency. Currently supports the calculation of:
 - Time-To-Collision (TTC): Calculates the TTC using linear extrapolation of the velocity (i.e., speed and heading). Reports the minimum TTC and classifies interactions as conflicts using (multiple) configurable TTC thresholds.
 
-> [!warning]
-> Currently, only TTC is supported by `pytrafficutils.ssm.SurrogateSafetyProcessor()`. The Post-Encroachment Time (PET) can be calculated using the function `pytrafficutils.ssm.pet()` for specific trajectory pairs, but this is not yet integrated with `SurrogateSafetyProcessor()` and does not consider footprints.
-
 ## Authors
 
 - Christoph M. Konrad, c.m.konrad@tudelft.nl
